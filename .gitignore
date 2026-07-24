@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime files
+tmp/
+temp/
+*.pid
+*.pid.lock
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Build output
+dist/
+build/
+
+# Editor files
+.vscode/
+.idea/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Local databases and exports
+*.sqlite
+*.sqlite3
+*.db
+*.csv
+
+# Personal or test member data
+data/
+test-data/
+member-data/
