@@ -109,6 +109,8 @@ class SlackAIAgent {
         };
     }
 
+
+
     async analyzeAndPostMember(memberInfo) {
         let analysisId = null;
         try {
