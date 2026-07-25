@@ -1,7 +1,7 @@
 import pkg from '@slack/bolt';
 const { App } = pkg;
 import { WebClient } from '@slack/web-api';
-import { ChatOpenAI } from '@langchain/openai';
+import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import express from 'express';
 import dotenv from 'dotenv';
@@ -27,10 +27,10 @@ class SlackAIAgent {
             appToken: process.env.SLACK_APP_TOKEN
         });
         this.webClient = new WebClient(process.env.SLACK_BOT_TOKEN);
-        this.openai = new ChatOpenAI({
-            model: "gpt-4",
+        this.llm = new ChatGoogleGenerativeAI({
+            model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+            apiKey: process.env.GEMINI_API_KEY,
             temperature: 0.3,
-            apiKey: process.env.OPENAI_API_KEY
         });
 
         this.setupSlackEvents();
@@ -228,7 +228,7 @@ class SlackAIAgent {
                 ? researchData.map(r => `${r.title}: ${r.content}`).join(`\\n`)
                 : 'Limited research data available'
 
-            const chain = prompt.pipe(this.openai);
+            const chain = prompt.pipe(this.llm);
             const result = await chain.invoke({
                 name: memberInfo.name,
                 email: memberInfo.email || 'Not provided',
@@ -250,12 +250,15 @@ class SlackAIAgent {
             }
 
         } catch (error) {
-            log.error('AI analysis error:', error.message);
+            console.error("========== GEMINI ERROR ==========");
+            console.error(error);
+            console.error("==================================");
+
             return {
                 fitScore: 50,
-                insights: ['Unable to complete full analysis'],
-                recommendations: ['Manual review recommended']
-            }
+                insights: ["Unable to complete full analysis"],
+                recommendations: ["Manual review recommended"]
+            };
         }
     }
 
