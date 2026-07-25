@@ -28,7 +28,7 @@ class SlackAIAgent {
         });
         this.webClient = new WebClient(process.env.SLACK_BOT_TOKEN);
         this.llm = new ChatGoogleGenerativeAI({
-            model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+            model: process.env.GEMINI_MODEL || "gemini-3-flash-preview",
             apiKey: process.env.GEMINI_API_KEY,
             temperature: 0.3,
         });
