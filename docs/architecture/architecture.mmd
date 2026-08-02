@@ -1,0 +1,42 @@
+flowchart TB
+    subgraph CORE[Core Community Intelligence Workflow]
+        direction TB
+        SW[Slack Workspace]
+        SE[Slack Events<br/>Socket Mode]
+        SB[Slack Bolt + Web API]
+        MP[Member Profile Extraction]
+        PR[Public Research<br/>- Company Website<br/>- GitHub Search]
+        GA[Gemini Structured Analysis]
+        VN[Validation & Normalization]
+        DB[(PostgreSQL Persistence)]
+        SR[Private Slack Report]
+
+        SW --> SE
+        SE --> SB
+        SB --> MP
+        MP --> PR
+        PR --> GA
+        GA --> VN
+        VN --> DB
+        DB --> SR
+    end
+
+    subgraph SUPPORT[Supporting Interfaces]
+        direction LR
+        HEALTH[GET /health]
+        TEST[POST /test/analyze-member<br/>Development only]
+    end
+
+    TEST -. invokes analysis workflow .-> PR
+
+    classDef slack fill:#F3E8FF,stroke:#4A154B,color:#2D0A35,stroke-width:1.5px;
+    classDef process fill:#EEF5FF,stroke:#2563EB,color:#172554,stroke-width:1.25px;
+    classDef ai fill:#F3EEFF,stroke:#7C3AED,color:#2E1065,stroke-width:1.5px;
+    classDef data fill:#EAF4FF,stroke:#336791,color:#16324F,stroke-width:1.5px;
+    classDef interface fill:#F8FAFC,stroke:#64748B,color:#1E293B,stroke-dasharray:4 3;
+
+    class SW,SE,SB,SR slack;
+    class MP,PR,VN process;
+    class GA ai;
+    class DB data;
+    class HEALTH,TEST interface;
