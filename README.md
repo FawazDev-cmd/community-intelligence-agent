@@ -25,10 +25,6 @@ The demo uses Render Free Tier infrastructure, so it may cold-start or be tempor
 
 Coming soon
 
-**Screenshots**
-
-Coming soon
-
 ## Problem
 
 Modern communities often receive new members faster than they can manually research and onboard them consistently. Automation can organize available evidence and suggest next steps, but it should not replace human judgment.
@@ -60,6 +56,32 @@ flowchart LR
     K[POST /test/analyze-member<br/>development only] -.-> J
     J -. supports .-> B
 ```
+
+## Screenshots
+
+### GitHub Repository
+
+![Community Intelligence Agent GitHub repository](docs/screenshots/github-home.jpg)
+
+The repository includes project documentation, deployment instructions, architecture assets, and responsible AI guidance.
+
+### Slack Member Analysis
+
+![Evidence-aware Slack member analysis](docs/screenshots/member-analysis.jpg)
+
+The bot posts an evidence-aware onboarding summary into a private Slack channel.
+
+### Architecture Overview
+
+![Community Intelligence Agent architecture](docs/architecture/architecture.svg)
+
+The architecture illustrates the end-to-end event-driven workflow from Slack events through validated analysis, persistence, and reporting.
+
+### Health Endpoint
+
+![Deployed service health endpoint](docs/screenshots/health-endpoint.jpg)
+
+The deployed service exposes a lightweight health endpoint for deployment verification.
 
 ## Architecture Principles
 
@@ -171,7 +193,6 @@ Recommendations:
 - Ask about current community goals.
 ```
 
-> Future screenshot placeholder: `docs/screenshots/member-analysis.png` - no screenshot is currently included.
 
 ## Technology stack
 
