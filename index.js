@@ -1,134 +1,72 @@
 import pkg from '@slack/bolt';
 const { App } = pkg;
 import { WebClient } from '@slack/web-api';
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import express from 'express';
 import dotenv from 'dotenv';
 import axios from 'axios';
-
-import { initDatabase, saveMemberAnalysis, markAsSentToSlack, closeDatabase } from './db.js'
+import { fileURLToPath } from 'url';
+import path from 'path';
+import { initDatabase, saveMemberAnalysis, markAsSentToSlack, closeDatabase } from './db.js';
+import { failedAnalysis, normalizeAnalysisResponse, validateMemberInfo } from './analysis.js';
+import { buildSlackReport } from './slack-format.js';
 
 dotenv.config();
+const log = { info: (msg, ...args) => console.log(`[INFO] ${msg}`, ...args), error: (msg, ...args) => console.error(`[ERROR] ${msg}`, ...args), debug: (msg, ...args) => process.env.NODE_ENV === 'development' && console.log(`[DEBUG] ${msg}`, ...args) };
 
-const log = {
-    info: (msg, ...args) => console.log(`[INFO] ${msg}`, ...args),
-    error: (msg, ...args) => console.log(`[ERROR] ${msg}`, ...args),
-    debug: (msg, ...args) => process.env.NODE_ENV === "development" && console.log(`[DEBUG] ${msg}`, ...args)
-}
-
-class SlackAIAgent {
+export class SlackAIAgent {
     constructor() {
-        this.app = express()
-        this.slack = new App({
-            token: process.env.SLACK_BOT_TOKEN,
-            signingSecret: process.env.SLACK_SIGNING_SECRET,
-            socketMode: true,
-            appToken: process.env.SLACK_APP_TOKEN
-        });
+        if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is required to start the Community Intelligence Agent.');
+        if (!process.env.GEMINI_MODEL) throw new Error('GEMINI_MODEL is required to start the Community Intelligence Agent.');
+        this.app = express();
+        this.slack = new App({ token: process.env.SLACK_BOT_TOKEN, signingSecret: process.env.SLACK_SIGNING_SECRET, socketMode: true, appToken: process.env.SLACK_APP_TOKEN });
         this.webClient = new WebClient(process.env.SLACK_BOT_TOKEN);
-        this.llm = new ChatGoogleGenerativeAI({
-            model: process.env.GEMINI_MODEL || "gemini-3-flash-preview",
-            apiKey: process.env.GEMINI_API_KEY,
-            temperature: 0.3,
-        });
-
+        this.llm = new ChatGoogleGenerativeAI({ model: process.env.GEMINI_MODEL, apiKey: process.env.GEMINI_API_KEY, temperature: 0.2 });
         this.setupSlackEvents();
         this.setupExpress();
     }
 
     setupSlackEvents() {
         this.slack.event('team_join', async ({ event }) => {
-            try {
-                log.info(`New member joined: ${event.user.real_name ||
-                    event.user.name}`)
-                const userInfo = await this.getUserInfo(event.user.id);
-                await this.analyzeAndPostMember(userInfo);
-            } catch (error) {
-                log.error('Error processing team_join:', error.message)
-            }
+            try { await this.analyzeAndPostMember(await this.getUserInfo(event.user.id)); } catch (error) { log.error('Error processing team_join:', error.message); }
         });
-
         this.slack.event('member_joined_channel', async ({ event }) => {
-            try {
-                if (event.channel_type === 'C') {
-                    log.info(`Member ${event.user} joined channel ${event.channel}`)
-                    const userInfo = await this.getUserInfo(event.user);
-                    await this.analyzeAndPostMember(userInfo)
-                }
-            } catch (error) {
-                log.error('Error processing member_joined_channel:', error.message)
-            }
+            try { if (event.channel_type === 'C') await this.analyzeAndPostMember(await this.getUserInfo(event.user)); } catch (error) { log.error('Error processing member_joined_channel:', error.message); }
         });
-        this.slack.error(async (error) => log.error('Slack error:', error.message))
+        this.slack.error(async error => log.error('Slack error:', error.message));
     }
 
     setupExpress() {
         this.app.use(express.json());
-
-        this.app.get('/health', (req, res) => {
-            res.json({ status: 'healthy', timestamp: new Date().toISOString() });
-        })
-
-        if (process.env.NODE_ENV === 'development') {
-            this.app.post('/test/analyze-member', async (req, res) => {
-                try {
-                    const { memberInfo } = req.body;
-                    if (!memberInfo) return res.status(400).json({ error: 'memberInfo is required' })
-                    const analysis = await this.analyzeAndPostMember(memberInfo);
-                    res.json({ success: true, analysis, timestamp: new Date().toISOString() });
-                } catch (error) {
-                    log.error('Test analysis error:', error.message)
-                    res.status(500).json({ error: 'Analysis failed', message: error.message })
-                }
-            });
-        }
-
-        this.app.use((err, req, res, next) => {
-            log.error('Express error', err.message)
-            res.status(500).json({ error: 'Internal server error' })
-        })
+        this.app.get('/health', (req, res) => res.json({ status: 'healthy', timestamp: new Date().toISOString() }));
+        if (process.env.NODE_ENV === 'development') this.app.post('/test/analyze-member', async (req, res) => {
+            const validationError = validateMemberInfo(req.body?.memberInfo);
+            if (validationError) return res.status(400).json({ error: validationError });
+            try { return res.json(await this.analyzeAndPostMember(req.body.memberInfo)); }
+            catch (error) { log.error('Test analysis error:', error.message); return res.status(500).json({ error: 'Analysis failed' }); }
+        });
+        this.app.use((err, req, res, next) => { log.error('Express error:', err.message); res.status(500).json({ error: 'Internal server error' }); });
     }
 
     async getUserInfo(userId) {
-        const result = await this.webClient.users.info({ user: userId });
-        const user = result.user;
-
-        return {
-            id: user.id,
-            name: user.real_name || user.name,
-            username: user.name,
-            email: user.profile?.email,
-            title: user.profile?.title,
-            timezone: user.tz,
-            profile: {
-                firstName: user.profile?.first_name,
-                lastName: user.profile?.last_name,
-                statusText: user.profile?.status_text
-            }
-        };
+        const user = (await this.webClient.users.info({ user: userId })).user;
+        return { id: user.id, name: user.real_name || user.name, username: user.name, email: user.profile?.email, title: user.profile?.title, timezone: user.tz, profile: { firstName: user.profile?.first_name, lastName: user.profile?.last_name, statusText: user.profile?.status_text } };
     }
-
-
 
     async analyzeAndPostMember(memberInfo) {
         let analysisId = null;
         try {
-            log.info(`Processing member: ${memberInfo.name}`)
+            log.info(`Processing member: ${memberInfo.name}`);
             const researchData = await this.doBasicResearch(memberInfo);
             const analysis = await this.analyzeWithAI(memberInfo, researchData);
-            log.info(`Saving analysis to database for ${memberInfo.name}`);
             analysisId = await saveMemberAnalysis(memberInfo, analysis, researchData);
-            await this.postAnalysisToChannel(memberInfo, analysis, researchData);
-
-            if (analysisId) {
-                await markAsSentToSlack(analysisId);
-            }
+            await this.postAnalysisToChannel(memberInfo, analysis);
+            await markAsSentToSlack(analysisId);
+            return { success: true, analysisId, analysis, timestamp: new Date().toISOString() };
         } catch (error) {
             log.error(`Error processing ${memberInfo.name}:`, error.message);
-            if (analysisId) {
-                log.info(`Analysis ${analysisId} saved to database but not sent to Slack due to error`);
-            }
+            if (analysisId) log.info(`Analysis ${analysisId} was saved but not sent to Slack`);
             throw error;
         }
     }
@@ -137,253 +75,75 @@ class SlackAIAgent {
         const results = [];
         try {
             if (memberInfo.email && !this.isPersonalEmail(memberInfo.email)) {
-                const domain = memberInfo.email.split('@')[1];
-                const companyInfo = await this.getCompanyInfo(domain);
+                const companyInfo = await this.getCompanyInfo(memberInfo.email.split('@')[1]);
                 if (companyInfo) results.push(companyInfo);
-
-                if (memberInfo.name) {
-                    const githubInfo = await this.getGitHubInfo(memberInfo.name);
-                    if (githubInfo) results.push(githubInfo);
-                }
             }
-        } catch (error) {
-            log.error('Research error:', error.message);
-        }
+            if (memberInfo.name) {
+                const githubInfo = await this.getGitHubInfo(memberInfo.name);
+                if (githubInfo) results.push(githubInfo);
+            }
+        } catch (error) { log.error('Research error:', error.message); }
         return results;
     }
 
     async getCompanyInfo(domain) {
         try {
-            const response = await axios.get(`https://www.${domain}`, {
-                timeout: 5000,
-                headers: { 'User-Agent': 'Mozilla/5.0' }
-            });
-
-            const titleMatch = response.data.match(/<title>(.*?)<\/title>/i)
-            const title = titleMatch ? titleMatch[1] : `Company: ${domain}`;
-
-            return {
-                url: `https://www.${domain}`,
-                title: title,
-                content: `Company website for ${domain}`,
-                type: 'company'
-            }
-        } catch (error) {
-            log.error(`Could not fetch ${domain}:`, error.message);
-            return null;
-        }
+            const response = await axios.get(`https://www.${domain}`, { timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+            const title = response.data.match(/<title>(.*?)<\/title>/i)?.[1] || `Company: ${domain}`;
+            return { url: `https://www.${domain}`, title, content: `Public company website for ${domain}`, type: 'company', evidenceType: 'confirmed' };
+        } catch (error) { log.debug(`Could not fetch ${domain}:`, error.message); return null; }
     }
 
     async getGitHubInfo(name) {
         try {
-            const response = await axios.get(
-                `https://api.github.com/search/users?q=${encodeURIComponent(name)}`,
-                { timeout: 5000 }
-            );
-
-            if (response.data.items && response.data.items.length > 0) {
-                const user = response.data.items[0];
-                return {
-                    url: user.html_url,
-                    title: `GitHub: ${user.login}`,
-                    content: `${user.public_repos} public repositories`,
-                    type: 'github'
-                }
-            }
-        } catch (error) {
-            log.debug('GitHub search error:', error.message)
-        }
+            const user = (await axios.get(`https://api.github.com/search/users?q=${encodeURIComponent(name)}`, { timeout: 5000 })).data.items?.[0];
+            if (user) return { url: user.html_url, title: `Possible GitHub match: ${user.login}`, content: 'Identity is unverified; this search result may belong to another person.', type: 'github', evidenceType: 'possible_match', identityVerified: false };
+        } catch (error) { log.debug('GitHub search error:', error.message); }
         return null;
     }
 
-
     async analyzeWithAI(memberInfo, researchData) {
-        const prompt = ChatPromptTemplate.fromTemplate(
-            `Analyze this new community member for fit with our commercial 
-    product.
-
-    Company: ${process.env.COMPANY_NAME || 'Your Company'}
-    Product: ${process.env.COMPANY_PRODUCT || 'Your Product'}
-
-    Member:
-    - Name: {name}
-    - Email: {email}
-    - Title: {title}
-
-    Research Data:
-    {research}
-
-    Provide a JSON response with:
-    - fitScore (0-100): likelihood they'd be interested in our product
-    - insights: array of 3-5 key observations
-    - recommendations: array of 2-4 engagement suggestions
-
-    Consider job title, company size, technical background, and budget 
-    authority.`
-        );
-
-
+        const prompt = ChatPromptTemplate.fromTemplate(`Assess product fit using only the supplied Slack profile and research. Do not infer protected characteristics or invent identity, company size, purchasing power, budget authority, or responsibilities. Treat possible_match research as unverified. Separate evidence from inference, state missing information, and keep recommendations concise. Product fit is advisory and always requires human review. Return JSON only, exactly matching this contract:\n{"status":"completed|incomplete|failed","categoryScores":{"technicalRelevance":0,"communityAlignment":0,"contributionPotential":0,"productFit":0},"overallScore":0,"confidence":"low|medium|high|none","evidence":[{"claim":"string","source":"string","type":"confirmed|possible_match"}],"inferences":["string"],"missingInformation":["string"],"recommendations":["string"],"manualReviewRequired":true}\nCompleted scores are integers 0-100. Use null category and overall scores, confidence none, and manualReviewRequired true for failure. Confidence reflects evidence completeness.\nCompany: {company}\nProduct: {product}\nMember: {member}\nResearch: {research}`);
         try {
-            const researchSummary = researchData.length > 0
-                ? researchData.map(r => `${r.title}: ${r.content}`).join(`\\n`)
-                : 'Limited research data available'
-
-            const chain = prompt.pipe(this.llm);
-            const result = await chain.invoke({
-                name: memberInfo.name,
-                email: memberInfo.email || 'Not provided',
-                title: memberInfo.title || 'not provided',
-                research: researchSummary
-            });
-
-            const responseText = result.content || result;
-
-            const cleanedResponse =
-                responseText.replace(/```json\n?|\n?```/g, '').trim()
-
-            const analysis = JSON.parse(cleanedResponse)
-
-            return {
-                fitScore: Math.max(0, Math.min(100, analysis.fitScore || 50)),
-                insights: Array.isArray(analysis.insights) ? analysis.insights : ['Analysis completed'],
-                recommendations: Array.isArray(analysis.recommendations) ? analysis.recommendations : ['Follow up recommended']
-            }
-
-        } catch (error) {
-            console.error("========== GEMINI ERROR ==========");
-            console.error(error);
-            console.error("==================================");
-
-            return {
-                fitScore: 50,
-                insights: ["Unable to complete full analysis"],
-                recommendations: ["Manual review recommended"]
-            };
-        }
+            const result = await prompt.pipe(this.llm).invoke({ company: process.env.COMPANY_NAME || 'Not provided', product: process.env.COMPANY_PRODUCT || 'Not provided', member: JSON.stringify({ name: memberInfo.name, email: memberInfo.email || null, title: memberInfo.title || null }), research: JSON.stringify(researchData) });
+            const analysis = normalizeAnalysisResponse(result);
+            if (analysis.status === 'failed') log.error('Gemini returned malformed or invalid structured output.');
+            return analysis;
+        } catch (error) { log.error('Gemini analysis failed:', error.message); return failedAnalysis('Gemini analysis failed and requires manual review.'); }
     }
 
-    async postAnalysisToChannel(member, analysis, researchData) {
-        const color = analysis.fitScore >= 80 ? '#36a64f'
-            : analysis.fitScore >= 60 ? '#ffb84d'
-                : analysis.fitScore >= 40 ? '#ff9500' : '#ff4444';
-
-        const blocks = [
-            {
-                type: 'header',
-                text: { type: 'plain_text', text: `🔍 New Member: ${member.name}` }
-            },
-            {
-                type: 'section',
-                fields: [
-                    { type: 'mrkdwn', text: `*Fit Score:* ${analysis.fitScore}/100` },
-                    { type: 'mrkdwn', text: `*Email:* ${member.email || 'Not provided'}` },
-                    { type: 'mrkdwn', text: `*Title:* ${member.title || 'Not provided'}` },
-                ]
-            }
-        ];
-
-        if (analysis.insights.length > 0) {
-            blocks.push({
-                type: 'section',
-                text: {
-                    type: 'mrkdwn',
-                    text: `*Insights:*\n${analysis.insights.map(i =>
-                        `• ${i}`).join('\n')}`
-                }
-            })
-        }
-
-        if (analysis.recommendations.length > 0) {
-            blocks.push({
-                type: 'section',
-                text: {
-                    type: 'mrkdwn',
-                    text: `*Recommendations:*\n${analysis.recommendations.map(i =>
-                        `• ${i}`).join('\n')}`
-                }
-            });
-        }
-
-        blocks.push({
-            type: 'context',
-            elements: [
-                {
-                    type: 'mrkdwn',
-                    text: `📊 Analyzed: ${new Date().toISOString()}`
-                }
-            ]
-        });
-
-        await this.webClient.chat.postMessage({
-            channel: process.env.SLACK_PRIVATE_CHANNEL_ID,
-            text: `New Member Analysis: ${member.name} (${analysis.fitScore}/100)`,
-            attachments: [
-                {
-                    color: color,
-                    blocks: blocks
-                }
-            ]
-        });
-
-        log.info(`Analysis posted to channel for ${member.name}`)
+    async postAnalysisToChannel(member, analysis) {
+        const report = buildSlackReport(member, analysis);
+        await this.webClient.chat.postMessage({ channel: process.env.SLACK_PRIVATE_CHANNEL_ID, text: `New Member Analysis: ${member.name} (${report.score})`, attachments: [{ color: report.color, blocks: report.blocks }] });
+        log.info(`Analysis posted to channel for ${member.name}`);
     }
 
-    isPersonalEmail(email) {
-        const personalDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com'];
-        const domain = email.split('@')[1]?.toLowerCase();
-        return personalDomains.includes(domain);
-    }
-
+    isPersonalEmail(email) { return ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com'].includes(email.split('@')[1]?.toLowerCase()); }
 
     async start() {
         try {
-            log.info('🗄️ Initilazing database...')
-            await initDatabase()
-
+            log.info('Initializing database...');
+            await initDatabase();
             const port = process.env.PORT || 3000;
-            this.server = this.app.listen(port, () => {
-                log.info(`🚀 Express server running on port ${port}`);
-            })
-
+            this.server = this.app.listen(port, () => log.info(`Express server running on port ${port}`));
             await this.slack.start();
-            log.info('⚡️ Slack bot connected');
-
-            log.info('🎉 Slack AI Agent is running!')
-
-            if (process.env.NODE_ENV === 'development') {
-                log.info(`Test endpoint: POST http://localhost:${port}/test/analyze-member`)
-            }
-
-        } catch (error) {
-            log.error('Failed to start:', error.message)
-            process.exit(1)
-        }
+            log.info('Slack AI Agent is running');
+        } catch (error) { log.error('Failed to start:', error.message); process.exit(1); }
     }
 
     async stop() {
-        log.info('Shutting down...')
-        try {
-            await this.slack.stop()
-            if (this.server) {
-                await new Promise(resolve => this.server.close(resolve));
-            }
-            await closeDatabase();
-            log.info('Stopped successfully')
-        } catch (error) {
-            log.error('Shutdown error:', error.message)
-        }
-        process.exit(0)
+        log.info('Shutting down...');
+        try { await this.slack.stop(); if (this.server) await new Promise(resolve => this.server.close(resolve)); await closeDatabase(); log.info('Stopped successfully'); }
+        catch (error) { log.error('Shutdown error:', error.message); }
     }
 }
 
-const agent = new SlackAIAgent()
-
-process.on('SIGINT', () => agent.stop());
-process.on('SIGTERM', () => agent.stop());
-
-agent.start().catch(error => {
-    console.error('Startup failed:', error.message);
-    process.exit(1)
-})
-
-export default agent
+const isMain = process.argv[1] && path.basename(process.argv[1]) === path.basename(fileURLToPath(import.meta.url));
+if (isMain) {
+    try {
+        const agent = new SlackAIAgent();
+        process.on('SIGINT', async () => { await agent.stop(); process.exit(0); });
+        process.on('SIGTERM', async () => { await agent.stop(); process.exit(0); });
+        agent.start();
+    } catch (error) { log.error('Startup failed:', error.message); process.exit(1); }
+}

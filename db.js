@@ -43,6 +43,10 @@ export async function initDatabase() {
         );
         `)
 
+        await client.query(`ALTER TABLE member_analyses ALTER COLUMN fit_score DROP NOT NULL;`);
+        await client.query(`ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS analysis_status VARCHAR(20) DEFAULT 'completed';`);
+        await client.query(`ALTER TABLE member_analyses ADD COLUMN IF NOT EXISTS structured_analysis JSONB;`);
+
         await client.query(`
             CREATE INDEX IF NOT EXISTS idx_member_id ON member_analyses(member_id);
         `);
@@ -74,8 +78,10 @@ export async function saveMemberAnalysis(memberInfo, analysis, researchData) {
             fit_score, 
             insights, 
             recommendations, 
-            research_data
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            research_data,
+            analysis_status,
+            structured_analysis
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING id`,
             [
                 memberInfo.id || null,
@@ -83,10 +89,12 @@ export async function saveMemberAnalysis(memberInfo, analysis, researchData) {
                 memberInfo.email || null,
                 memberInfo.title || null,
                 memberInfo.timezone || null,
-                analysis.fitScore,
-                JSON.stringify(analysis.insights),
+                analysis.overallScore,
+                JSON.stringify(analysis.inferences),
                 JSON.stringify(analysis.recommendations),
-                JSON.stringify(researchData)
+                JSON.stringify(researchData),
+                analysis.status,
+                JSON.stringify(analysis)
             ]);
 
         console.log(`[INFO] Saved analysis to database with ID: ${result.rows[0].id}`);
