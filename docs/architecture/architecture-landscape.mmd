@@ -1,0 +1,45 @@
+%%{init: {"theme":"base","themeVariables":{"fontSize":"18px","fontFamily":"Arial, sans-serif","primaryTextColor":"#1E293B","lineColor":"#475569","clusterBkg":"#FFFFFF","clusterBorder":"#CBD5E1"},"flowchart":{"htmlLabels":true,"nodeSpacing":28,"rankSpacing":36,"curve":"linear"}}}%%
+flowchart TB
+    subgraph CORE[Core Community Intelligence Workflow]
+        direction TB
+        subgraph ROW1[ ]
+            direction LR
+            SW[Slack<br/>Workspace]
+            SE[Slack Events<br/>Socket Mode]
+            SB[Slack Bolt<br/>+ Web API]
+            MP[Member Profile<br/>Extraction]
+            PR[Public Research<br/>- Company Website<br/>- GitHub Search]
+            SW --> SE --> SB --> MP --> PR
+        end
+
+        subgraph ROW2[ ]
+            direction LR
+            GA[Gemini Structured<br/>Analysis]
+            VN[Validation &<br/>Normalization]
+            DB[(PostgreSQL<br/>Persistence)]
+            SR[Private Slack<br/>Report]
+            GA --> VN --> DB --> SR
+        end
+
+        PR --> GA
+    end
+
+    subgraph SUPPORT[Supporting Interfaces]
+        direction LR
+        HEALTH[GET /health]
+        TEST[POST /test/analyze-member<br/>Development only]
+    end
+
+    classDef slack fill:#F3E8FF,stroke:#4A154B,color:#2D0A35,stroke-width:1.5px;
+    classDef process fill:#EEF5FF,stroke:#2563EB,color:#172554,stroke-width:1.25px;
+    classDef ai fill:#F3EEFF,stroke:#7C3AED,color:#2E1065,stroke-width:1.5px;
+    classDef data fill:#EAF4FF,stroke:#336791,color:#16324F,stroke-width:1.5px;
+    classDef interface fill:#F8FAFC,stroke:#64748B,color:#1E293B,stroke-dasharray:4 3;
+
+    class SW,SE,SB,SR slack;
+    class MP,PR,VN process;
+    class GA ai;
+    class DB data;
+    class HEALTH,TEST interface;
+    style ROW1 fill:transparent,stroke:transparent
+    style ROW2 fill:transparent,stroke:transparent

@@ -73,7 +73,7 @@ The bot posts an evidence-aware onboarding summary into a private Slack channel.
 
 ### Architecture Overview
 
-![Community Intelligence Agent architecture](docs/architecture/architecture.svg)
+![Community Intelligence Agent architecture](docs/architecture/architecture-landscape.svg)
 
 The architecture illustrates the end-to-end event-driven workflow from Slack events through validated analysis, persistence, and reporting.
 
