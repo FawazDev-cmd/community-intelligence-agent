@@ -29,10 +29,18 @@ export class SlackAIAgent {
 
     setupSlackEvents() {
         this.slack.event('team_join', async ({ event }) => {
+            log.info(`Received team_join event for user ${event.user.id}`);
             try { await this.analyzeAndPostMember(await this.getUserInfo(event.user.id)); } catch (error) { log.error('Error processing team_join:', error.message); }
         });
         this.slack.event('member_joined_channel', async ({ event }) => {
-            try { if (event.channel_type === 'C') await this.analyzeAndPostMember(await this.getUserInfo(event.user)); } catch (error) { log.error('Error processing member_joined_channel:', error.message); }
+            log.info(`Received member_joined_channel event for user ${event.user}, channel ${event.channel}, type ${event.channel_type || 'unknown'}`);
+            try {
+                if (!['C', 'G'].includes(event.channel_type)) {
+                    log.info(`Ignored member_joined_channel event for unsupported channel type ${event.channel_type || 'unknown'}`);
+                    return;
+                }
+                await this.analyzeAndPostMember(await this.getUserInfo(event.user));
+            } catch (error) { log.error('Error processing member_joined_channel:', error.message); }
         });
         this.slack.error(async error => log.error('Slack error:', error.message));
     }
@@ -50,8 +58,13 @@ export class SlackAIAgent {
     }
 
     async getUserInfo(userId) {
-        const user = (await this.webClient.users.info({ user: userId })).user;
-        return { id: user.id, name: user.real_name || user.name, username: user.name, email: user.profile?.email, title: user.profile?.title, timezone: user.tz, profile: { firstName: user.profile?.first_name, lastName: user.profile?.last_name, statusText: user.profile?.status_text } };
+        try {
+            const user = (await this.webClient.users.info({ user: userId })).user;
+            return { id: user.id, name: user.real_name || user.name, username: user.name, email: user.profile?.email, title: user.profile?.title, timezone: user.tz, profile: { firstName: user.profile?.first_name, lastName: user.profile?.last_name, statusText: user.profile?.status_text } };
+        } catch (error) {
+            log.error(`Slack profile lookup failed for user ${userId}:`, error.message);
+            throw error;
+        }
     }
 
     async analyzeAndPostMember(memberInfo) {
@@ -114,8 +127,13 @@ export class SlackAIAgent {
 
     async postAnalysisToChannel(member, analysis) {
         const report = buildSlackReport(member, analysis);
-        await this.webClient.chat.postMessage({ channel: process.env.SLACK_PRIVATE_CHANNEL_ID, text: `New Member Analysis: ${member.name} (${report.score})`, attachments: [{ color: report.color, blocks: report.blocks }] });
-        log.info(`Analysis posted to channel for ${member.name}`);
+        try {
+            await this.webClient.chat.postMessage({ channel: process.env.SLACK_PRIVATE_CHANNEL_ID, text: `New Member Analysis: ${member.name} (${report.score})`, attachments: [{ color: report.color, blocks: report.blocks }] });
+            log.info(`Analysis posted to channel for ${member.name}`);
+        } catch (error) {
+            log.error(`Slack report failed for member ${member.id || 'unknown'}:`, error.message);
+            throw error;
+        }
     }
 
     isPersonalEmail(email) { return ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com'].includes(email.split('@')[1]?.toLowerCase()); }
