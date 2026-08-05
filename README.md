@@ -42,20 +42,7 @@ The agent receives Slack membership events, retrieves the available member profi
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    A[Slack event] --> B[Slack Bolt and Web API]
-    B --> C[Member profile extraction]
-    C --> D[Public company and GitHub research]
-    D --> E[Gemini structured analysis]
-    E --> F[Validation and normalization]
-    F --> G[(PostgreSQL)]
-    G --> H[Private Slack report]
-
-    I[GET /health] -.-> J[Express]
-    K[POST /test/analyze-member<br/>development only] -.-> J
-    J -. supports .-> B
-```
+![Community Intelligence Agent architecture](docs/architecture/architecture-landscape.svg)
 
 ## Screenshots
 
